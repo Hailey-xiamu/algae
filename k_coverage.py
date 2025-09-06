@@ -1,176 +1,136 @@
 import sys
+import threading
 import heapq
-from collections import defaultdict, deque
+from collections import deque
 
 def solve():
-    n, m = map(int, input().split())
-    reds = set(map(lambda x: int(x) - 1, input().split()))  # Convert to 0-indexed
-    
-    # Build adjacency list
+    sys.setrecursionlimit(10**7)
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    reds = set(int(next(it)) - 1 for _ in range(m))
+
     adj = [[] for _ in range(n)]
     for _ in range(n - 1):
-        u, v, w = map(int, input().split())
-        u -= 1  # Convert to 0-indexed
-        v -= 1
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        w = int(next(it))
         adj[u].append((v, w))
         adj[v].append((u, w))
-    
-    # Dijkstra to find shortest distances from a source
+
+    # Dijkstra to compute distances from a start node
     def dijkstra(start):
-        dist = [float('inf')] * n
+        INF = 10**30
+        dist = [INF] * n
         dist[start] = 0
         pq = [(0, start)]
-        
         while pq:
             d, u = heapq.heappop(pq)
             if d > dist[u]:
                 continue
-            
             for v, w in adj[u]:
-                if dist[u] + w < dist[v]:
-                    dist[v] = dist[u] + w
-                    heapq.heappush(pq, (dist[v], v))
-        
+                nd = d + w
+                if nd < dist[v]:
+                    dist[v] = nd
+                    heapq.heappush(pq, (nd, v))
         return dist
-    
-    # Find the diameter of red points (farthest pair)
-    # Step 1: Find the farthest red point from an arbitrary red point
+
+    # 1) 从任意红点出发，找到最远红点 A
     any_red = next(iter(reds))
-    dist_from_any = dijkstra(any_red)
-    
-    A = any_red
-    max_dist = 0
-    for red in reds:
-        if dist_from_any[red] > max_dist:
-            max_dist = dist_from_any[red]
-            A = red
-    
-    # Step 2: Find the farthest red point from A
-    dist_from_A = dijkstra(A)
-    
-    B = A
-    max_dist = 0
-    for red in reds:
-        if dist_from_A[red] > max_dist:
-            max_dist = dist_from_A[red]
-            B = red
-    
-    # Reconstruct path from A to B
-    def reconstruct_path():
-        # BFS to find parent pointers
-        parent = [-1] * n
-        parent_weight = [0] * n
-        queue = deque([A])
-        visited = [False] * n
-        visited[A] = True
-        
-        while queue:
-            u = queue.popleft()
-            for v, w in adj[u]:
-                if not visited[v]:
-                    visited[v] = True
-                    parent[v] = u
-                    parent_weight[v] = w
-                    queue.append(v)
-        
-        # Reconstruct path from B to A
-        path = []
-        current = B
-        while current != -1:
-            path.append(current)
-            current = parent[current]
-        
-        path.reverse()
-        return path, parent_weight
-    
-    path, parent_weight = reconstruct_path()
+    dist0 = dijkstra(any_red)
+    A = max(reds, key=lambda x: dist0[x])
+
+    # 2) 从 A 出发，找到最远红点 B
+    distA = dijkstra(A)
+    B = max(reds, key=lambda x: distA[x])
+
+    # 3) BFS 获取 A->B 路径
+    parent = [-1] * n
+    q = deque([A])
+    seen = [False] * n
+    seen[A] = True
+    while q:
+        u = q.popleft()
+        for v, _ in adj[u]:
+            if not seen[v]:
+                seen[v] = True
+                parent[v] = u
+                q.append(v)
+
+    path = []
+    cur = B
+    while cur != -1:
+        path.append(cur)
+        cur = parent[cur]
+    path.reverse()
     L = len(path)
-    
-    # Compute cumulative distances along the path
+
+    # 4) xi: 累积距离
     xi = [0] * L
     for i in range(1, L):
-        xi[i] = xi[i-1] + parent_weight[path[i]]
-    
-    # For each node on path, compute max distance to red points in its subtree
-    def compute_wi():
-        wi = [0] * L
-        path_set = set(path)
-        
-        for idx, node in enumerate(path):
-            max_red_dist = 0
-            
-            # DFS from each neighbor not on the path
-            for neighbor, edge_weight in adj[node]:
-                if neighbor in path_set:
-                    continue
-                
-                # BFS/DFS to find max distance to red points in this subtree
-                stack = [(neighbor, edge_weight)]
-                visited = set([node])  # Don't go back to path
-                
-                while stack:
-                    u, dist_so_far = stack.pop()
-                    if u in visited:
-                        continue
-                    visited.add(u)
-                    
-                    if u in reds:
-                        max_red_dist = max(max_red_dist, dist_so_far)
-                    
-                    for v, w in adj[u]:
-                        if v not in visited:
-                            stack.append((v, dist_so_far + w))
-            
-            wi[idx] = max_red_dist
-        
-        return wi
-    
-    wi = compute_wi()
-    
-    # Binary search on the answer
-    def can_cover_with_distance(D):
-        # Create intervals for each path node
+        # find weight from path[i-1] to path[i]
+        u = path[i-1]; v = path[i]
+        for to, w in adj[u]:
+            if to == v:
+                xi[i] = xi[i-1] + w
+                break
+
+    # 5) 多源Dijkstra 计算每个节点到最近路径节点的距离和索引
+    INF = 10**30
+    dist = [INF] * n
+    idx = [-1] * n
+    pq = []
+    for i, u in enumerate(path):
+        dist[u] = 0
+        idx[u] = i
+        heapq.heappush(pq, (0, u))
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist[u]:
+            continue
+        for v, w in adj[u]:
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                idx[v] = idx[u]
+                heapq.heappush(pq, (nd, v))
+
+    # 6) 由各红点更新 wi
+    wi = [0] * L
+    for r in reds:
+        pi = idx[r]
+        wi[pi] = max(wi[pi], dist[r])
+
+    # 7) 二分 + 贪心判断
+    def can(D):
         intervals = []
         for i in range(L):
-            if D < wi[i]:
+            if wi[i] > D:
                 return False
-            
             reach = D - wi[i]
-            left = xi[i] - reach
-            right = xi[i] + reach
-            intervals.append((left, right))
-        
-        # Sort intervals by right endpoint
+            intervals.append((xi[i] - reach, xi[i] + reach))
         intervals.sort(key=lambda x: x[1])
-        
-        # Greedy: place centers to cover all intervals
-        centers_used = 0
+        used = 0
         i = 0
-        
-        while i < len(intervals) and centers_used < 2:
-            # Place a center at the rightmost position of current interval
-            center_pos = intervals[i][1]
-            centers_used += 1
-            
-            # Skip all intervals that this center covers
-            while i < len(intervals) and intervals[i][0] <= center_pos:
+        while i < L and used < 2:
+            used += 1
+            cover_pos = intervals[i][1]
+            while i < L and intervals[i][0] <= cover_pos:
                 i += 1
-        
-        return i >= len(intervals)
-    
-    # Binary search
-    left, right = 0, max(xi) + max(wi) if wi else max(xi)
-    answer = right
-    
-    while left <= right:
-        mid = (left + right) // 2
-        if can_cover_with_distance(mid):
-            answer = mid
-            right = mid - 1
+        return i >= L
+
+    lo, hi = 0, xi[-1] + max(wi)
+    ans = hi
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if can(mid):
+            ans = mid
+            hi = mid - 1
         else:
-            left = mid + 1
-    
-    print(answer)
+            lo = mid + 1
+    print(ans)
 
 if __name__ == '__main__':
     solve()
